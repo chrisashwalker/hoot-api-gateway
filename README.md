@@ -2,7 +2,9 @@
 The API Gateway for [Hoot](https://github.com/chrisashwalker/hoot) - a tiny Human Resources management system built upon microservices. 
 
 ## Build Docker image
+```
 docker build -t hoot-api-gateway .
+```
 
 ## Scaffolded with
 ```
