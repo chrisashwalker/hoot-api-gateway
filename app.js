@@ -19,19 +19,19 @@ app.get('/', function(req, res, next) {
 });
 
 // set proxies redirecting to Hoot APIs
-var peopleServiceProxy = httpProxy('http://localhost:8001/people')
+var peopleServiceProxy = httpProxy('http://hoot-api-people:8001/people')
 
 app.get('/people(/*)?', (req, res, next) => {
   peopleServiceProxy(req, res, next)
 });
 
-var postsServiceProxy = httpProxy('http://localhost:8002/posts')
+var postsServiceProxy = httpProxy('http://hoot-api-posts:8002/posts')
 
 app.get('/posts(/*)?', (req, res, next) => {
   postsServiceProxy(req, res, next)
 });
 
-var teamsServiceProxy = httpProxy('http://localhost:8003/teams')
+var teamsServiceProxy = httpProxy('http://hoot-api-teams:8003/teams')
 
 app.get('/teams(/*)?', (req, res, next) => {
   teamsServiceProxy(req, res, next)

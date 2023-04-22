@@ -1,14 +1,10 @@
-## Creation
-npx express-generator --view=ejs hoot-api-gateway
+# Hoot API Gateway
+The API Gateway for [Hoot](https://github.com/chrisashwalker/hoot) - a tiny Human Resources management system built upon microservices. 
 
-## Install dependencies
-npm install
-
-## Run
-npm start
-
-## Build image
+## Build Docker image
 docker build -t hoot-api-gateway .
 
-## Create and run container
-docker run --name hoot-api-gateway-container -p 8004:8004 hoot-api-gateway
+## Scaffolded with
+```
+npx express-generator --view=ejs hoot-api-gateway
+```
