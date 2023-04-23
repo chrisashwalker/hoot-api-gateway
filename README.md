@@ -1,5 +1,6 @@
 # Hoot API Gateway
-The API Gateway for [Hoot](https://github.com/chrisashwalker/hoot) - a tiny Human Resources management system built upon microservices. 
+The API Gateway for [Hoot](https://github.com/chrisashwalker/hoot) - a tiny Human Resources management system built upon microservices.  
+Developed with Express JS.
 
 ## Build Docker image
 ```
