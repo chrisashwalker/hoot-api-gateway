@@ -37,6 +37,12 @@ app.get('/teams(/*)?', (req, res, next) => {
   teamsServiceProxy(req, res, next)
 });
 
+var teamsServiceProxy = httpProxy('http://hoot-api-teams:8004/links')
+
+app.get('/links(/*)?', (req, res, next) => {
+  linksServiceProxy(req, res, next)
+});
+
 // catch 404 and forward to error handler
 app.use(function(req, res, next) {
   next(createError(404));
@@ -53,7 +59,7 @@ app.use(function(err, req, res, next) {
   res.render('error');
 });
 
-app.listen(8004, 
-  () => console.log(`Server is running at port: 8004`));
+app.listen(8005, 
+  () => console.log(`Server is running at port: 8005`));
 
 module.exports = app;
