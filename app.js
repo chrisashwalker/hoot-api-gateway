@@ -40,7 +40,7 @@ const pollQueue = () => {
 }
 
 const retryMessage = (msg) => {
-  let msgObj = JSON.parse(Buffer.from(msg.content));
+  let msgObj = JSON.parse(Buffer.from(msg.content).toString());
   let fetchOptions = { method: msgObj.method };
   if (fetchOptions.method != 'GET') {
     fetchOptions.body = msgObj.body;
@@ -49,7 +49,7 @@ const retryMessage = (msg) => {
   .then(res => res.json())
   .then(json => {
     msgObj.response = json;
-    messageChannel.sendToQueue(completedQueue, new Buffer.from(JSON.stringify(msgObj)));
+    messageChannel.sendToQueue(completedQueue, Buffer.from(JSON.stringify(msgObj)));
   });
 }
 
