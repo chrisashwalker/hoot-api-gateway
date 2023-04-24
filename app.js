@@ -6,23 +6,62 @@ var amqplib = require('amqplib');
 
 let messageChannel = null;
 const pendingQueue = 'pending-requests';
+const completedQueue = 'completed-requests';
+let pollTimer = null;
+
 const connectToMessaging = () => {
-  amqplib.connect('amqp://localhost:8006')
+  amqplib.connect('amqp://hoot-message-queues')
           .then(conn => conn.createChannel())
           .then(ch => {
             messageChannel = ch;
             ch.assertQueue(pendingQueue);
+            ch.assertQueue(completedQueue);
+          })
+          .then(() => {
+            pollTimer = setInterval(pollQueue, 10000);
           })
           .catch(err => {
             console.log('Failed to connect to message queues. ' + err);
           });
 }
 
+const pollQueue = () => {
+  if (messageChannel) {
+    try {
+      messageChannel.consume(pendingQueue, msg => {
+        retryMessage(msg);
+        messageChannel.ack(msg);
+      })
+    }
+    catch {
+      //clearInterval(pollTimer);
+    }
+  }
+}
+
+const retryMessage = (msg) => {
+  let msgObj = JSON.parse(Buffer.from(msg.content));
+  let fetchOptions = { method: msgObj.method };
+  if (fetchOptions.method != 'GET') {
+    fetchOptions.body = msgObj.body;
+  }
+  fetch(msgObj.url, fetchOptions)
+  .then(res => res.json())
+  .then(json => {
+    msgObj.response = json;
+    messageChannel.sendToQueue(completedQueue, new Buffer.from(JSON.stringify(msgObj)));
+  });
+}
+
 const proxyErrorHandler = async (req, err, next) => {
   sent = false;
   try {
-    message = `${req.url} ${JSON.stringify(req.body)}`;
-    sent = messageChannel.sendToQueue(pendingQueue, new Buffer.from(message));
+    message = {
+      url: req.protocol + '://' + req.get('host') + req.originalUrl,
+      body: req.body,
+      method: req.method
+    };
+    sent = messageChannel.sendToQueue(pendingQueue, new Buffer.from(JSON.stringify(message)));
   }
   catch {
     // pass
@@ -31,8 +70,9 @@ const proxyErrorHandler = async (req, err, next) => {
     next();
     return;
   }
-  console.log('Something went wrong. Your request has been queued.');
-  next();
+  var error = createError(500);
+  error.message = 'Something went wrong. Your request has been queued.';
+  next(error);
 }
 
 var app = express();
