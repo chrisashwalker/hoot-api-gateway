@@ -7,7 +7,6 @@ var amqplib = require('amqplib');
 let messageChannel = null;
 const pendingQueue = 'pending-requests';
 const completedQueue = 'completed-requests';
-let pollTimer = null;
 
 const connectToMessaging = () => {
   amqplib.connect('amqp://hoot-message-queues')
@@ -18,25 +17,14 @@ const connectToMessaging = () => {
             ch.assertQueue(completedQueue);
           })
           .then(() => {
-            pollTimer = setInterval(pollQueue, 10000);
+            messageChannel.consume(pendingQueue, msg => {
+              retryMessage(msg);
+              messageChannel.ack(msg);
+            })
           })
           .catch(err => {
             console.log('Failed to connect to message queues. ' + err);
           });
-}
-
-const pollQueue = () => {
-  if (messageChannel) {
-    try {
-      messageChannel.consume(pendingQueue, msg => {
-        retryMessage(msg);
-        messageChannel.ack(msg);
-      })
-    }
-    catch {
-      //clearInterval(pollTimer);
-    }
-  }
 }
 
 const retryMessage = (msg) => {
@@ -51,28 +39,6 @@ const retryMessage = (msg) => {
     msgObj.response = json;
     messageChannel.sendToQueue(completedQueue, Buffer.from(JSON.stringify(msgObj)));
   });
-}
-
-const proxyErrorHandler = async (req, err, next) => {
-  sent = false;
-  try {
-    message = {
-      url: req.protocol + '://' + req.get('host') + req.originalUrl,
-      body: req.body,
-      method: req.method
-    };
-    sent = messageChannel.sendToQueue(pendingQueue, new Buffer.from(JSON.stringify(message)));
-  }
-  catch {
-    // pass
-  }
-  if (!sent) {
-    next();
-    return;
-  }
-  var error = createError(500);
-  error.message = 'Something went wrong. Your request has been queued.';
-  next(error);
 }
 
 var app = express();
@@ -94,25 +60,25 @@ app.get('/', function(req, res, next) {
 var peopleServiceProxy = httpProxy('http://hoot-api-people:8001/people')
 
 app.get('/people(/*)?', (req, res, next) => {
-  peopleServiceProxy(req, res, (err) => proxyErrorHandler(req, err, next));
+  peopleServiceProxy(req, res, next);  
 });
 
 var postsServiceProxy = httpProxy('http://hoot-api-posts:8002/posts')
 
 app.get('/posts(/*)?', (req, res, next) => {
-  postsServiceProxy(req, res, (err) => proxyErrorHandler(req, err, next));
+  postsServiceProxy(req, res, next);
 });
 
 var teamsServiceProxy = httpProxy('http://hoot-api-teams:8003/teams')
 
 app.get('/teams(/*)?', (req, res, next) => {
-  teamsServiceProxy(req, res, (err) => proxyErrorHandler(req, err, next));
+  teamsServiceProxy(req, res, next);
 });
 
 var teamsServiceProxy = httpProxy('http://hoot-api-teams:8004/links')
 
 app.get('/links(/*)?', (req, res, next) => {
-  linksServiceProxy(req, res, (err) => proxyErrorHandler(req, err, next));
+  linksServiceProxy(req, res, next);
 });
 
 // catch 404 and forward to error handler
@@ -120,20 +86,40 @@ app.use(function(req, res, next) {
   next(createError(404));
 });
 
+app.use(function(err, req, res, next) {
+  var sent = false;
+  try {
+    message = {
+      url: req.protocol + '://' + req.get('host') + req.originalUrl,
+      body: req.body,
+      method: req.method
+    };
+    sent = messageChannel.sendToQueue(pendingQueue, new Buffer.from(JSON.stringify(message)));
+  }
+  catch {
+    //continue
+  }
+  if (sent) {
+    next(createError('Something went wrong. Your request has been queued.'));
+  }
+  next();
+});
+
 // error handler
 app.use(function(err, req, res, next) {
+
   // set locals, only providing error in development
   res.locals.message = err.message;
   res.locals.error = req.app.get('env') === 'development' ? err : {};
 
-  // render the error page
-  res.status(err.status || 500);
-  res.render('error');
+  // send the error
+  res.status(err.status || 500).send({ error: err });
 });
 
-connectToMessaging();
-
 app.listen(8005, 
-  () => console.log(`Server is running at port: 8005`));
+  () => { 
+    console.log(`Server is running at port: 8005`);
+    connectToMessaging();
+  });
 
 module.exports = app;
