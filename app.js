@@ -8,8 +8,9 @@ const PORT = 8005;
 let messageChannel = null;
 const pendingQueue = 'pending-requests';
 const completedQueue = 'completed-requests';
+const failureMessage = 'Something went wrong. Your request has been queued.';
 
-const connectToMessaging = async () => {
+const connectToMessaging = () => {
   amqplib.connect('amqp://hoot-message-queues')
     .then(conn => conn.createChannel())
     .then(ch => {
@@ -20,17 +21,9 @@ const connectToMessaging = async () => {
     })
     .then(() => {
       // Accept messages from pending request queue
-      messageChannel.consume(pendingQueue, async (msg) => {
-        try {
-          // Try to process request
-          await retryMessage(msg);
-          // Acknowledge message after handling it
-          messageChannel.ack(msg);
-        } 
-        catch {
-          // Leave message on queue
-          console.log('Failed to process message.')
-        }
+      messageChannel.consume(pendingQueue, (msg) => {
+        // Try to process request
+        retryMessage(msg);
       });
     })
     .catch(err => {
@@ -38,20 +31,35 @@ const connectToMessaging = async () => {
     });
   }
 
-const retryMessage = async (msg) => {
+const retryMessage = (msg) => {
   // Convert message to JSON object
   let msgObj = JSON.parse(Buffer.from(msg.content).toString());
-  let fetchOptions = { method: msgObj.method };
+  let fetchHeaders = new Headers();
+  fetchHeaders.append('X-Hoot-Retry', 'True');
+  let fetchOptions = { 
+    method: msgObj.method,
+    headers: fetchHeaders
+  };
   // Add body for non-GET HTTP request
   if (fetchOptions.method != 'GET') {
     fetchOptions.body = msgObj.body;
   }
   // Submit request and then send the response to the completed request queue
   fetch(msgObj.url, fetchOptions)
-    .then(res => res.json())
-    .then(json => {
-      msgObj.response = json;
-      messageChannel.sendToQueue(completedQueue, Buffer.from(JSON.stringify(msgObj)));
+    .then(res => { 
+      if (res.status >= 200 && res.status < 300) {
+        // Acknowledge message after handling it
+        messageChannel.ack(msg);
+        msgObj.response = res.json();
+        messageChannel.sendToQueue(completedQueue, Buffer.from(JSON.stringify(msgObj)));
+      } else {
+        // Return to queue
+        messageChannel.nack(msg);
+      }
+    })
+    .catch(reason => {
+      // Return to queue
+      messageChannel.nack(msg);
     });
 }
 
@@ -89,7 +97,7 @@ app.all('/teams(/*)?', (req, res, next) => {
   teamsServiceProxy(req, res, next);
 });
 
-var teamsServiceProxy = httpProxy('http://hoot-api-teams:8004/links')
+var linksServiceProxy = httpProxy('http://hoot-api-links:8004/links')
 
 app.all('/links(/*)?', (req, res, next) => {
   linksServiceProxy(req, res, next);
@@ -104,6 +112,13 @@ app.use(function(req, res, next) {
 
 // Catch failed API requests and add them to the pending request queue
 app.use(function(err, req, res, next) {
+
+  // Don't repeat error handling for retried requests
+  if (req.get('X-Hoot-Retry') == 'True'){
+    next();
+    return;
+  }
+
   var messageSent = false;
   try {
     message = {
@@ -116,8 +131,8 @@ app.use(function(err, req, res, next) {
   catch {
     // Continue, we'll propagate the original error later
   }
-  if (sent) {
-    next(createError('Something went wrong. Your request has been queued.'));
+  if (messageSent) {
+    next(createError(failureMessage));
   }
   next();
 });
