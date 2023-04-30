@@ -4,46 +4,60 @@ var createError = require('http-errors');
 var httpProxy = require('express-http-proxy')
 var amqplib = require('amqplib');
 
+const PORT = 8005;
 let messageChannel = null;
 const pendingQueue = 'pending-requests';
 const completedQueue = 'completed-requests';
 
-const connectToMessaging = () => {
+const connectToMessaging = async () => {
   amqplib.connect('amqp://hoot-message-queues')
-          .then(conn => conn.createChannel())
-          .then(ch => {
-            messageChannel = ch;
-            ch.assertQueue(pendingQueue);
-            ch.assertQueue(completedQueue);
-          })
-          .then(() => {
-            messageChannel.consume(pendingQueue, msg => {
-              retryMessage(msg);
-              messageChannel.ack(msg);
-            })
-          })
-          .catch(err => {
-            console.log('Failed to connect to message queues. ' + err);
-          });
-}
+    .then(conn => conn.createChannel())
+    .then(ch => {
+      messageChannel = ch;
+      // Create queues if they don't exist
+      ch.assertQueue(pendingQueue);
+      ch.assertQueue(completedQueue);
+    })
+    .then(() => {
+      // Accept messages from pending request queue
+      messageChannel.consume(pendingQueue, async (msg) => {
+        try {
+          // Try to process request
+          await retryMessage(msg);
+          // Acknowledge message after handling it
+          messageChannel.ack(msg);
+        } 
+        catch {
+          // Leave message on queue
+          console.log('Failed to process message.')
+        }
+      });
+    })
+    .catch(err => {
+      console.log('Failed to connect to message queues. ' + err);
+    });
+  }
 
-const retryMessage = (msg) => {
+const retryMessage = async (msg) => {
+  // Convert message to JSON object
   let msgObj = JSON.parse(Buffer.from(msg.content).toString());
   let fetchOptions = { method: msgObj.method };
+  // Add body for non-GET HTTP request
   if (fetchOptions.method != 'GET') {
     fetchOptions.body = msgObj.body;
   }
+  // Submit request and then send the response to the completed request queue
   fetch(msgObj.url, fetchOptions)
-  .then(res => res.json())
-  .then(json => {
-    msgObj.response = json;
-    messageChannel.sendToQueue(completedQueue, Buffer.from(JSON.stringify(msgObj)));
-  });
+    .then(res => res.json())
+    .then(json => {
+      msgObj.response = json;
+      messageChannel.sendToQueue(completedQueue, Buffer.from(JSON.stringify(msgObj)));
+    });
 }
 
 var app = express();
 
-// view engine setup
+// View engine setup
 app.set('views', path.join(__dirname, 'views'));
 app.set('view engine', 'ejs');
 
@@ -51,12 +65,12 @@ app.use(express.json());
 app.use(express.urlencoded({ extended: false }));
 app.use(express.static(path.join(__dirname, 'public')));
 
-/* GET home page. */
 app.get('/', function(req, res, next) {
   res.render('index', { title: 'Hoot API Gateway' });
 });
 
-// set proxies redirecting to Hoot APIs
+/* Set HTTP proxies redirecting to Hoot API endpoints */
+
 var peopleServiceProxy = httpProxy('http://hoot-api-people:8001/people')
 
 app.all('/people(/*)?', (req, res, next) => {
@@ -81,23 +95,26 @@ app.all('/links(/*)?', (req, res, next) => {
   linksServiceProxy(req, res, next);
 });
 
-// catch 404 and forward to error handler
+/* End of endpoint declarations */
+
+// Catch 404 and forward to error handler
 app.use(function(req, res, next) {
   next(createError(404));
 });
 
+// Catch failed API requests and add them to the pending request queue
 app.use(function(err, req, res, next) {
-  var sent = false;
+  var messageSent = false;
   try {
     message = {
       url: req.protocol + '://' + req.get('host') + req.originalUrl,
       body: req.body,
       method: req.method
     };
-    sent = messageChannel.sendToQueue(pendingQueue, new Buffer.from(JSON.stringify(message)));
+    messageSent = messageChannel.sendToQueue(pendingQueue, new Buffer.from(JSON.stringify(message)));
   }
   catch {
-    //continue
+    // Continue, we'll propagate the original error later
   }
   if (sent) {
     next(createError('Something went wrong. Your request has been queued.'));
@@ -105,9 +122,8 @@ app.use(function(err, req, res, next) {
   next();
 });
 
-// error handler
+// Error handler
 app.use(function(err, req, res, next) {
-
   // set locals, only providing error in development
   res.locals.message = err.message;
   res.locals.error = req.app.get('env') === 'development' ? err : {};
@@ -116,9 +132,9 @@ app.use(function(err, req, res, next) {
   res.status(err.status || 500).send({ error: err });
 });
 
-app.listen(8005, 
+app.listen(PORT, 
   () => { 
-    console.log(`Server is running at port: 8005`);
+    console.log(`Server is running at port: ${PORT}`);
     connectToMessaging();
   });
 
